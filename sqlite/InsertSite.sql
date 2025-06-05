@@ -1,0 +1,1 @@
+INSERT INTO site_data (siteCode,siteDesc,siteAbbrv,deptOU,areaOU) VALUES (20,'San Dimas High School','SDH','Teachers','High School')"

@@ -1,0 +1,23 @@
+#################
+## Cooper
+#################
+logs
+test
+*.log
+*desktop.ini
+
+# Windows image file caches
+Thumbs.db
+
+# Folder config file
+Desktop.ini
+
+/notes.ps1
+/jenkins.ps1
+/sqlite/sites.db
+/sqlite/sites.sqbpro
+/sqlite/sites.db-journal
+/params.ps1
+/README.md
+/sqlite/DB.Browser.for.SQLite-v3.13.1-win64
+/Update-ADFromEscape.ps1
