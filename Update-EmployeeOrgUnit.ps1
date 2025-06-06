@@ -119,7 +119,7 @@ function Set-LevelOU ($tData, $altJData) {
 
 function Set-OldNewOUs ($rootOU) {
   process {
-    $_.oldNew = @{
+    $_.oldNew = [PSCustomObject]@{
       'old' = $_.ad.DistinguishedName.Replace(",$rootOU", '').Split(',')[1..100] -join ','
       'new' = $_.targetOU.Replace(",$rootOU", '')
     }
