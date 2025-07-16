@@ -29,6 +29,7 @@ param (
   # Isolate/limit source user objects
   [Parameter(Mandatory = $True)]
   [string]$ADSearchBase,
+  [string]$CreationCutOff,
   [Parameter(Mandatory = $True)]
   [string]$SQLServerEmployees,
   [Parameter(Mandatory = $True)]
@@ -61,8 +62,8 @@ function Complete-Processing {
 }
 
 function Get-ADData ($ou) {
-  $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber'
-  $adResults = Get-ADUser -Filter "EmployeeID -like '*' -and mail -like '*@*'" -SearchBase $ou -Properties $properties
+  $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'whenCreated'
+  $adResults = Get-ADUser -Filter "EmployeeID -like '*' -and mail -like '*@*'" -SearchBase $ou -Properties $properties | Sort-Object -Property whenCreated
   Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F DarkGreen
   $adResults
 }
@@ -72,6 +73,16 @@ function Get-EmployeeData ($sqlParams) {
   $data = New-SqlOperation @sqlParams -Query $query
   Write-Host ('{0},Count:{1}' -f $MyInvocation.MyCommand.Name, @($data).count) -f Green
   $data | ConvertTo-Csv | ConvertFrom-Csv
+}
+
+function Get-RecentAccounts ($cutOff) {
+  process {
+    if (!$cutOff) { return $_ }
+    if ($_.whenCreated -gt $cutOff) {
+      Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.SamAccountName, $_.whenCreated)
+      $_
+    }
+  }
 }
 
 function New-Obj {
@@ -91,7 +102,7 @@ function Set-ADData ($data) {
   process {
     $id = $_.emp.EmpId
     $_.ad = $data.Where({ $_.EmployeeID -eq $id })
-    if (!$_.ad) { return }
+    if (!$_.ad) { return } # Skip if AD object not present
     $_
   }
 }
@@ -105,19 +116,19 @@ function Set-LevelOU ($tData, $altJData) {
     elseif ([int]$_.emp.SiteID -ge 500 ) { 'District Services' }
     else {
       if ($altJob) {
-        Write-Verbose ('{0},Alt Job detected [{1}]' -f $MyInvocation.MyCommand.Name, $altJob.OU)
+        Write-Verbose ('{0},{1},Alt Job detected [{2}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $altJob.OU)
         $altJob.OU
       }
       else {
         $bargID = $_.emp.BargUnitID
-    ($tData.Where({ $_.barGUnitID -eq $bargID })).type
+        ($tData.Where({ $_.barGUnitID -eq $bargID })).type
       }
     }
     $_
   }
 }
 
-function Set-OldNewOUs ($rootOU) {
+function Set-OldNewOUData ($rootOU) {
   process {
     $_.oldNew = [PSCustomObject]@{
       'old' = $_.ad.DistinguishedName.Replace(",$rootOU", '').Split(',')[1..100] -join ','
@@ -131,13 +142,14 @@ function Set-SiteData ($data) {
   process {
     $id = $_.emp.SiteID
     $_.siteData = $data.Where({ $_.siteCode -eq $id })
-    if (!$_.siteData) { return }
+    if (!$_.siteData) { return } # Skip if no site match found
     $_
   }
 }
 
 function Set-TargetOU ($ou) {
-  begin {
+`
+    begin {
     $rootOU = $ou.Trim('OU').Trim('=')
   }
   process {
@@ -151,6 +163,10 @@ function Set-TargetOU ($ou) {
         'OU={0},OU={1},OU={2},OU={3}' -f $_.siteData.deptOU, $_.siteData.areaOU, $_.levelOU, $rootOU
       }
     }
+    if (!$_.targetOU) {
+      $msg = $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.emp.SiteID, $_.siteData.siteDesc
+      return (Write-Host ('{0},{1},No target OU detected for site {2} - {3}' -f $msg) -F Red)
+    } # Skip if no target OU detected
     $_
   }
 }
@@ -195,16 +211,16 @@ $empDBParams = @{
   Credential = $SQLCredentialEmployees
 }
 
-$escapeData = Get-EmployeeData $empDBParams
-$adData = Get-ADData $ADSearchBase
+$empData = Get-EmployeeData $empDBParams
+$adData = Get-ADData $ADSearchBase | Get-RecentAccounts $CreationCutOff
 
-$escapeData |
+$empData |
   New-Obj |
     Set-ADData $adData |
       Set-SiteData $siteData |
         Set-LevelOU $typeData $altJobData |
           Set-TargetOU $EmployeeRootOU |
-            Set-OldNewOUs $EmployeeRootOU |
+            Set-OldNewOUData $EmployeeRootOU |
               Test-OU $EmployeeRootOU |
                 Compare-OU |
                   Update-OU |
