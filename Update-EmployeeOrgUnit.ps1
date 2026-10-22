@@ -4,9 +4,9 @@
   update Active Direcrtory user object attrbutes using employeeId as the foreign key.
 .DESCRIPTION
 .EXAMPLE
-.\Update-EmployeeOrgUnit.ps1 -DomainController DC1.our.org -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj
+.\Update-EmployeeOrgUnit.ps1 -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj
 .EXAMPLE
-  .\Update-EmployeeOrgUnit.ps1-DomainController DC1.our.org -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj -WhatIf -Verbose -Debug
+  .\Update-EmployeeOrgUnit.ps1 -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj -WhatIf -Verbose -Debug
 .INPUTS
   Common parameters are used as inputs.
 .OUTPUTS
@@ -17,32 +17,18 @@ http://woshub.com/powershell-get-folder-sizes/
 
 [cmdletbinding()]
 param (
- [Parameter(Mandatory = $True)]
- [Alias('DCs')]
- [string[]]$DomainControllers,
- [Parameter(Mandatory = $True)]
- [Alias('ADCred')]
- [System.Management.Automation.PSCredential]$ADCredential,
+ [Parameter(Mandatory = $True)][PSCredential]$ADCredential,
  # # Used for building a target ou
- [Parameter(Mandatory = $True)]
- [string]$EmployeeRootOU,
+ [Parameter(Mandatory = $True)][string]$EmployeeRootOU,
  # Isolate/limit source user objects
- [Parameter(Mandatory = $True)]
- [string]$ADSearchBase,
- [string]$CreationCutOff,
- [Parameter(Mandatory = $True)]
- [string]$SQLServerEmployees,
- [Parameter(Mandatory = $True)]
- [string]$SQLDatabaseEmployees,
- [Parameter(Mandatory = $True)]
- [System.Management.Automation.PSCredential]$SQLCredentialEmployees,
- [Parameter(Mandatory = $True)]
- [string]$SQLiteSiteRefDatabase,
- # [Parameter(Mandatory = $True)]
- # [System.Management.Automation.PSCredential]$FileServerCredential,
- [switch]$Check,
- [Alias('wi')]
- [SWITCH]$WhatIf
+ [Parameter(Mandatory = $True)][string]$ADSearchBase,
+ [Parameter(Mandatory = $True)][string]$CreationCutOff,
+ [Parameter(Mandatory = $True)][string]$SQLServerEmployees,
+ [Parameter(Mandatory = $True)][string]$SQLDatabaseEmployees,
+ [Parameter(Mandatory = $True)][PSCredential]$SQLCredentialEmployees,
+ [Parameter(Mandatory = $True)][string]$SQLiteSiteRefDatabase,
+ [switch]$Wait,
+ [Alias('wi')][SWITCH]$WhatIf
 )
 
 function Compare-OU {
@@ -57,29 +43,28 @@ function Complete-Processing {
  process {
   Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.emp.EmpID, $_.ad.SamAccountName) -F Green
   Write-Verbose ($MyInvocation.MyCommand.Name, $_ | Out-String)
-  if ($Check) { Read-Host }
+  if ($Wait) { Read-Host 'Proceed?' }
  }
 }
 
-function Get-ADData ([pscredential]$cred) {
+function Get-ADData -ou $AD ($ou, [pscredential]$cred) {
  $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'whenCreated'
- $filter = "EmployeeID -like '*' -and mail -like '*@*' -and -not(employeeType -eq 'student')"
+ $filter = "
+ Enabled -eq 'True' -and
+ EmployeeID -like '*' -and
+ mail -like '*@*' -and
+ -not(employeeType -eq 'student')
+ "
  $params = @{
   Filter     = $filter
   Properties = $properties
+  SearchBase = $ou
   Credential = $cred
  }
- $adResults = Get-ADUser @params | Sort-Object -Property whenCreated
+ $adResults = Get-ADUser @params
  Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F DarkGreen
  $adResults
 }
-
-# function Get-ADData ($ou) {
-#  $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'whenCreated'
-#  $adResults = Get-ADUser -Filter "EmployeeID -like '*' -and mail -like '*@*'" -SearchBase $ou -Properties $properties | Sort-Object -Property whenCreated
-#  Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F DarkGreen
-#  $adResults
-# }
 
 function Get-EmployeeData ($sqlParams) {
  $query = Get-Content -Path '.\sql\active-employees.sql' -Raw
@@ -90,11 +75,7 @@ function Get-EmployeeData ($sqlParams) {
 
 function Get-RecentAccounts ($cutOff) {
  process {
-  if (!$cutOff) { return $_ }
-  if ($_.whenCreated -gt $cutOff) {
-   Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.SamAccountName, $_.whenCreated)
-   $_
-  }
+  $_ | Where-Object { $_.WhenCreated -gt $cutOff }
  }
 }
 
@@ -183,8 +164,8 @@ function Set-TargetOU ($ou) {
  }
 }
 
-function Test-OU ($ou) {
- begin { $allOrgUnits = Get-ADOrganizationalUnit -Filter 'Name -like "*"' -SearchBase $ou }
+function Test-OU ($ou, [pscredential]$cred) {
+ begin { $allOrgUnits = Get-ADOrganizationalUnit -Filter 'Name -like "*"' -SearchBase $ou -Credential $cred }
  process {
   $targOU = $_.targetOU
   $ou = $allOrgUnits.Where({ $_.DistinguishedName -eq $targOU })
@@ -195,22 +176,29 @@ function Test-OU ($ou) {
  }
 }
 
-function Update-OU {
+function Update-OU ([pscredential]$cred) {
  process {
   if (!$_.targetOU) { return $_ }
+  $params = @{
+   Identity   = $_.ad.ObjectGUID
+   TargetPath = $_.targetOU
+   Credential = $cred
+   Confirm    = $false
+   WhatIf     = $WhatIf
+  }
   Write-Host ('{0},{1},OLD:[{2}],NEW:[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new) -F Magenta
-  Move-ADObject -Identity $_.ad.ObjectGUID -TargetPath $_.targetOU -Confirm:$false -WhatIf:$WhatIf
+  # Move-ADObject @params
   $_
  }
 }
 
 # =====================================================================================
-Import-Module -Name 'dbatools', 'CommonScriptFunctions', 'PSSqlite'
+Show-BlockInfo Start
+Import-Module -Name 'CommonScriptFunctions', 'PSSqlite'
+Import-Module -Name dbatools -Cmdlet Invoke-DbaQuery, Set-DbatoolsConfig, Connect-DbaInstance, Disconnect-DbaInstance
+Import-Module -Name ActiveDirectory -Cmdlet 'Get-ADUser', 'Move-ADObject', 'Get-ADOrganizationalUnit' -WarningAction SilentlyContinue -ErrorAction Stop
 Show-BlockInfo Main
 if ($WhatIf) { Show-TestRun }
-
-$cmdlets = 'Get-ADUser', 'Move-ADObject', 'Get-ADOrganizationalUnit'
-Connect-ADSession $DomainControllers $ADCredential $cmdlets
 
 $siteData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM site_data'
 $typeData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM type_data'
@@ -224,18 +212,19 @@ $empDBParams = @{
 }
 
 $empData = Get-EmployeeData $empDBParams
-$adData = Get-ADData $ADSearchBase | Get-RecentAccounts $CreationCutOff
+$adData = Get-ADData -ou $ADSea -cred $ADCredential
+# | Get-RecentAccounts $CreationCutOff
 
 $empData |
  New-Obj |
-  Set-ADData $adData |
-   Set-SiteData $siteData |
+  Set-ADData -data $adData |
+   Set-SiteData -data $siteData |
     Set-LevelOU $typeData $altJobData |
      Set-TargetOU $EmployeeRootOU |
       Set-OldNewOUData $EmployeeRootOU |
-       Test-OU $EmployeeRootOU |
+       Test-OU $EmployeeRootOU $ADCredential |
         Compare-OU |
-         Update-OU |
+         Update-OU -cred $ADCredential |
           Complete-Processing
 
 if ($WhatIf) { Show-TestRun }
