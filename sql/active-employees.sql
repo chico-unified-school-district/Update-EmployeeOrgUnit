@@ -25,7 +25,7 @@ WHERE
   EmploymentStatusCode NOT IN ('R','T')
   AND SiteID <> ''
   AND BargUnitID IN ('CSEA', 'CUTA', 'REST')
-  -- AND EmpID in (11176)
+  -- AND EmpID in (999999999)
   -- PersonTypeId IN (1,2,4)
   -- AND
 -- AND DateTimeEdited > DATEADD(day,-45,getdate())
