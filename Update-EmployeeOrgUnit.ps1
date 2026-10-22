@@ -39,21 +39,17 @@ function Compare-OU {
  }
 }
 
-function Complete-Processing {
- process {
-  Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.emp.EmpID, $_.ad.SamAccountName) -F Green
-  Write-Verbose ($MyInvocation.MyCommand.Name, $_ | Out-String)
-  if ($Wait) { Read-Host 'Proceed?' }
- }
-}
-
-function Get-ADData -ou $AD ($ou, [pscredential]$cred) {
+function Get-ADData ($ou, [pscredential]$cred) {
  $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'whenCreated'
  $filter = "
  Enabled -eq 'True' -and
  EmployeeID -like '*' -and
  mail -like '*@*' -and
- -not(employeeType -eq 'student')
+ -not(employeeType -eq 'student') -and
+ -not(Description -like '*Service*') -and
+ -not(Description -like '*Generic*') -and
+ -not(Title -like '*Service*') -and
+ -not(Title -like '*Generic*')
  "
  $params = @{
   Filter     = $filter
@@ -61,8 +57,8 @@ function Get-ADData -ou $AD ($ou, [pscredential]$cred) {
   SearchBase = $ou
   Credential = $cred
  }
- $adResults = Get-ADUser @params
- Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F DarkGreen
+ $adResults = Get-ADUser @params | Sort-Object -Property SurName
+ Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F Green
  $adResults
 }
 
@@ -164,6 +160,13 @@ function Set-TargetOU ($ou) {
  }
 }
 
+function Show-Object {
+ process {
+  Write-Verbose ($MyInvocation.MyCommand.Name, $_ | Out-String)
+  # if ($Wait) { Read-Host 'Proceed?' }
+ }
+}
+
 function Test-OU ($ou, [pscredential]$cred) {
  begin { $allOrgUnits = Get-ADOrganizationalUnit -Filter 'Name -like "*"' -SearchBase $ou -Credential $cred }
  process {
@@ -177,6 +180,7 @@ function Test-OU ($ou, [pscredential]$cred) {
 }
 
 function Update-OU ([pscredential]$cred) {
+ begin { $i = 0 }
  process {
   if (!$_.targetOU) { return $_ }
   $params = @{
@@ -186,9 +190,14 @@ function Update-OU ([pscredential]$cred) {
    Confirm    = $false
    WhatIf     = $WhatIf
   }
+  $i++
   Write-Host ('{0},{1},OLD:[{2}],NEW:[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new) -F Magenta
-  # Move-ADObject @params
+  if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
+  Move-ADObject @params
   $_
+ }
+ end {
+  Write-Host ('{0},Total Updated:{1}' -f $MyInvocation.MyCommand.Name, $i) -F Green
  }
 }
 
@@ -212,7 +221,7 @@ $empDBParams = @{
 }
 
 $empData = Get-EmployeeData $empDBParams
-$adData = Get-ADData -ou $ADSea -cred $ADCredential
+$adData = Get-ADData -ou $ADSearchBase -cred $ADCredential
 # | Get-RecentAccounts $CreationCutOff
 
 $empData |
@@ -225,7 +234,7 @@ $empData |
        Test-OU $EmployeeRootOU $ADCredential |
         Compare-OU |
          Update-OU -cred $ADCredential |
-          Complete-Processing
+          Show-Object
 
 if ($WhatIf) { Show-TestRun }
 Show-BlockInfo end
