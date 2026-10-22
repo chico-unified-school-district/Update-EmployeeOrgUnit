@@ -58,7 +58,7 @@ function Get-ADData ($ou, [pscredential]$cred) {
   Credential = $cred
  }
  $adResults = Get-ADUser @params | Sort-Object -Property SurName
- Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults).count) -F Green
+ Write-Host ('{0},{1},count:{2}' -f $MyInvocation.MyCommand.Name, $ou, @($adResults).count) -F Green
  $adResults
 }
 
