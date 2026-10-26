@@ -182,8 +182,8 @@ function Test-OU ($ou, [pscredential]$cred) {
 function Update-OU ([pscredential]$cred) {
  begin {
   $i = 0
-  $list = @()
-  'empid|old_ou|new_ou' | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Force
+  # $list = @()
+  # 'empid|old_ou|new_ou' | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Force
  }
  process {
   if (!$_.targetOU) { return $_ }
@@ -195,7 +195,7 @@ function Update-OU ([pscredential]$cred) {
    WhatIf     = $WhatIf
   }
   $i++
-  $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new
+  # $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new
   Write-Host ('{0},{1},OLD:[{2}],NEW:[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new) -F Magenta
   if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
   Move-ADObject @params
@@ -203,7 +203,7 @@ function Update-OU ([pscredential]$cred) {
  }
  end {
   Write-Host ('{0},Total Updated:{1}' -f $MyInvocation.MyCommand.Name, $i) -F Green
-  $list | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Append -Force
+  # $list | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Append -Force
  }
 }
 
