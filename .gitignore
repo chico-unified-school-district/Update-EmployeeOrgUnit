@@ -13,3 +13,5 @@ Thumbs.db
 /params.ps1
 /sqlite/DB.Browser.for.SQLite-v3.13.1-win64
 /Update-ADFromEscape.ps1
+/Employee Org Unit Rules.gsheet
+/sqlite/sites copy.db
