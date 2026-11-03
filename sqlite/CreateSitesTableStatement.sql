@@ -15,5 +15,10 @@ CREATE TABLE "site_servers" (
 	"SiteCode"	INTEGER,
 	"SiteDescr"	TEXT,
 	"Groups"	TEXT,
-	"HomePath"	TEXT,
+	"HomePath"	TEXT
+)
+
+CREATE TABLE "alt_job_categories (
+	"JobCategoryDescr"	TEXT,
+	"OU"	TEXT
 )

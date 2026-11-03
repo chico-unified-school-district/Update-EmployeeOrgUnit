@@ -24,10 +24,10 @@ FROM vwHREmploymentList
 WHERE
   EmploymentStatusCode NOT IN ('R','T')
   AND SiteID <> ''
+  -- AND JobCategoryDescr <> 'Instructional Assistance'
   -- AND BargUnitID IN ('CSEA', 'CUTA', 'REST', 'CUMA')
-  -- AND EmpID in (999999999)
+  -- AND EmpID in (99999999)
   -- AND PersonTypeId IN (1,2,4,6)
-  -- AND
--- AND DateTimeEdited > DATEADD(day,-45,getdate())
--- AND NameLast = 'smith'
+  AND DateTimeEdited > DATEADD(day,-14,getdate())
+  -- AND NameLast = 'smith'
 ORDER BY empId;

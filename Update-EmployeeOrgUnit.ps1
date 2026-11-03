@@ -20,27 +20,28 @@ param (
  [Parameter(Mandatory = $True)][PSCredential]$ADCredential,
  # # Used for building a target ou
  [Parameter(Mandatory = $True)][string]$EmployeeRootOU,
- # Isolate/limit source user objects
  [Parameter(Mandatory = $True)][string]$ADSearchBase,
- [Parameter(Mandatory = $True)][string]$CreationCutOff,
  [Parameter(Mandatory = $True)][string]$SQLServerEmployees,
  [Parameter(Mandatory = $True)][string]$SQLDatabaseEmployees,
  [Parameter(Mandatory = $True)][PSCredential]$SQLCredentialEmployees,
  [Parameter(Mandatory = $True)][string]$SQLiteSiteRefDatabase,
+ [Parameter(Mandatory = $False)][string]$LogName,
+ [switch]$Log,
  [switch]$Wait,
  [Alias('wi')][SWITCH]$WhatIf
 )
 
 function Compare-OU {
  process {
-  Write-Verbose ('{0},{1},[{2}],[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new)
-  if ($_.oldNew.old -eq $_.oldNew.new) { return }
+  # Write-Verbose ('{0},{1},[{2}],[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new)
+  # Match instead of equals due to some staff being moved into more granular sub-OUs This will prevent a unneeded moves.
+  if ($_.oldNew.old -match $_.oldNew.new) { return }
   $_
  }
 }
 
 function Get-ADData ($ou, [pscredential]$cred) {
- $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'whenCreated'
+ $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'Description', 'whenCreated'
  $filter = "
  Enabled -eq 'True' -and
  EmployeeID -like '*' -and
@@ -57,8 +58,9 @@ function Get-ADData ($ou, [pscredential]$cred) {
   SearchBase = $ou
   Credential = $cred
  }
- $adResults = Get-ADUser @params | Sort-Object -Property SurName
- Write-Host ('{0},{1},count:{2}' -f $MyInvocation.MyCommand.Name, $ou, @($adResults).count) -F Green
+ $adResults = Get-ADUser @params | Group-Object -Property EmployeeID -AsHashTable
+ # $adResults = Get-ADUser @params | Where-Object { $_.SurName -like 'U*' } | Group-Object -Property EmployeeID -AsHashTable
+ Write-Host ('{0},{1},count:{2}' -f $MyInvocation.MyCommand.Name, $ou, @($adResults.values).count) -F Green
  $adResults
 }
 
@@ -69,17 +71,12 @@ function Get-EmployeeData ($sqlParams) {
  $data | ConvertTo-Csv | ConvertFrom-Csv
 }
 
-function Get-RecentAccounts ($cutOff) {
- process {
-  $_ | Where-Object { $_.WhenCreated -gt $cutOff }
- }
-}
-
 function New-Obj {
  process {
   [PSCustomObject]@{
    emp      = $_
    ad       = $null
+   info     = $null
    levelOU  = $null
    siteData = $null
    targetOU = $null
@@ -88,16 +85,24 @@ function New-Obj {
  }
 }
 
-function Set-ADData ($data) {
+function Set-PropAD ($data) {
  process {
   $id = $_.emp.EmpId
-  $_.ad = $data.Where({ $_.EmployeeID -eq $id })
+  if (!$id) { return } # Skip if ID  not present
+  $_.ad = $data["$id"]
   if (!$_.ad) { return } # Skip if AD object not present
   $_
  }
 }
 
-function Set-LevelOU ($tData, $altJData) {
+function Set-PropInfo {
+ process {
+  $_.info = '[{0},{1},{2}]' -f $_.emp.EmpId, $_.ad.SamAccountName, $_.ad.Description
+  $_
+ }
+}
+
+function Set-PropLevelOU ($tData, $altJData) {
  process {
   $jobCatDesc = $_.emp.JobCategoryDescr
   $altJob = $altJData.Where({ $_.JobCategoryDescr -eq $jobCatDesc })
@@ -118,7 +123,7 @@ function Set-LevelOU ($tData, $altJData) {
  }
 }
 
-function Set-OldNewOUData ($rootOU) {
+function Set-PropOldNewOUData ($rootOU) {
  process {
   $_.oldNew = [PSCustomObject]@{
    'old' = $_.ad.DistinguishedName.Replace(",$rootOU", '').Split(',')[1..100] -join ','
@@ -128,7 +133,7 @@ function Set-OldNewOUData ($rootOU) {
  }
 }
 
-function Set-SiteData ($data) {
+function Set-PropSiteData ($data) {
  process {
   $id = $_.emp.SiteID
   $_.siteData = $data.Where({ $_.siteCode -eq $id })
@@ -137,7 +142,7 @@ function Set-SiteData ($data) {
  }
 }
 
-function Set-TargetOU ($ou) {
+function Set-PropTargetOU ($ou) {
  begin {
   $rootOU = $ou.Trim('OU').Trim('=')
  }
@@ -182,8 +187,9 @@ function Test-OU ($ou, [pscredential]$cred) {
 function Update-OU ([pscredential]$cred) {
  begin {
   $i = 0
-  # $list = @()
-  # 'empid|old_ou|new_ou' | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Force
+  $list = @()
+  $logFilePath = ".\logs\Update-EmployeeOrgUnit-$LogName.log"
+  'empid|old_ou|new_ou' | Out-File -FilePath $logFilePath -Encoding UTF8 -Force
  }
  process {
   if (!$_.targetOU) { return $_ }
@@ -195,15 +201,16 @@ function Update-OU ([pscredential]$cred) {
    WhatIf     = $WhatIf
   }
   $i++
-  # $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new
-  Write-Host ('{0},{1},OLD:[{2}],NEW:[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new) -F Magenta
+  $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new
+  $msg = $MyInvocation.MyCommand.Name, $_.info, $_.oldNew.old, $_.oldNew.new
+  Write-Host ('{0},{1},OLD:{2},NEW:{3}' -f $msg) -F Magenta
   if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
   Move-ADObject @params
   $_
  }
  end {
   Write-Host ('{0},Total Updated:{1}' -f $MyInvocation.MyCommand.Name, $i) -F Green
-  # $list | Out-File -FilePath '.\logs\Update-EmployeeOrgUnit.log' -Encoding UTF8 -Append -Force
+  if ($Log) { $list | Out-File -FilePath $logFilePath -Encoding UTF8 -Append -Force }
  }
 }
 
@@ -217,7 +224,8 @@ if ($WhatIf) { Show-TestRun }
 
 $siteData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM site_data'
 $typeData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM type_data'
-$nonTeachingSql = "SELECT * from alt_job_categories WHERE OU = 'Non-Teaching'"
+$nonTeachingSql = 'SELECT * from alt_job_categories'
+# $nonTeachingSql = "SELECT * from alt_job_categories WHERE OU = 'Non-Teaching'"
 $altJobData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query $nonTeachingSql
 
 $empDBParams = @{
@@ -226,21 +234,30 @@ $empDBParams = @{
  Credential = $SQLCredentialEmployees
 }
 
-$empData = Get-EmployeeData $empDBParams
-$adData = Get-ADData -ou $ADSearchBase -cred $ADCredential
-# | Get-RecentAccounts $CreationCutOff
+if (!$wWhatIf) {
+ $stopTime = Get-Date '5:00PM'
+ Write-Host ('{0},Stop Time:{1}' -f $MyInvocation.MyCommand.Name, $stopTime) -F Green
+}
+do {
+ $empData = Get-EmployeeData $empDBParams
+ $adData = Get-ADData -ou $ADSearchBase -cred $ADCredential
 
-$empData |
- New-Obj |
-  Set-ADData -data $adData |
-   Set-SiteData -data $siteData |
-    Set-LevelOU $typeData $altJobData |
-     Set-TargetOU $EmployeeRootOU |
-      Set-OldNewOUData $EmployeeRootOU |
-       Test-OU $EmployeeRootOU $ADCredential |
-        Compare-OU |
-         Update-OU -cred $ADCredential |
-          Show-Object
+ $empData |
+  New-Obj |
+   Set-PropAD -data $adData |
+    Set-PropInfo |
+     Set-PropSiteData -data $siteData |
+      Set-PropLevelOU $typeData $altJobData |
+       Set-PropTargetOU $EmployeeRootOU |
+        Set-PropOldNewOUData $EmployeeRootOU |
+         Test-OU $EmployeeRootOU $ADCredential |
+          Compare-OU |
+           Update-OU -cred $ADCredential |
+            Show-Object
+ if ($WhatIf) { break }
+ Write-Host ('{0},Next run at {1}' -f $MyInvocation.MyCommand.Name, (Get-Date).AddMinutes(3600)) -F Green
+ Start-Sleep -Seconds 3600
+} until ((Get-Date) -gt (Get-Date $stopTime))
 
 if ($WhatIf) { Show-TestRun }
 Show-BlockInfo end

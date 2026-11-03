@@ -20,7 +20,10 @@ The script:
 Employees without a matching AD account, site mapping, or computable target OU
 are skipped. The script reports target OUs that it cannot find in Active
 Directory; review those messages and the proposed changes before running
-without `-WhatIf`.
+without `-WhatIf`. Without `-WhatIf`, it runs an initial pass and then repeats
+hourly until its local 5:00 PM stopping-time check succeeds. A `-WhatIf` run
+performs one pass. The script's helper functions are declared in alphabetical
+order.
 
 ## Requirements
 
@@ -41,11 +44,12 @@ The SQLite reference database must contain these tables:
 - `type_data`: `bargUnitId` and `type`
 - `alt_job_categories`: `JobCategoryDescr` and `OU`
 
-The script uses rows in `alt_job_categories` where `OU` is `Non-Teaching` to
-override the usual bargaining-unit mapping for matching job categories.
+Matching rows in `alt_job_categories` use their `OU` value to override the
+usual bargaining-unit mapping for that job category. The schema reference also
+includes a `site_servers` table, which this script does not currently query.
 [`sqlite/CreateSitesTableStatement.sql`](./sqlite/CreateSitesTableStatement.sql)
-shows part of the reference schema; make sure the database also has the
-`alt_job_categories` table before running.
+lists these table definitions, but is not ready to execute as-is; create or
+update the database so it contains the required tables before running.
 
 ## Run
 
@@ -60,7 +64,6 @@ $sqlCredential = Get-Credential
   -ADCredential $adCredential `
   -EmployeeRootOU 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
   -ADSearchBase 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
-  -CreationCutOff 'May 1 2025' `
   -SQLServerEmployees 'sql.example.org' `
   -SQLDatabaseEmployees 'EmployeeDatabase' `
   -SQLCredentialEmployees $sqlCredential `
@@ -68,14 +71,13 @@ $sqlCredential = Get-Credential
   -WhatIf -Verbose
 ```
 
-`CreationCutOff` is currently accepted as a required parameter but is not used
-to filter accounts. The script's active-employee query and AD filters determine
-which records are processed.
-
 Review the `-WhatIf` output before running for real. Remove `-WhatIf` to allow
 the script to move AD objects. Use `-Wait` to pause for input before each move;
 the script proceeds after that input and does not use it to cancel the move.
-The SQLite database path is resolved relative to the current working directory.
+The script initializes `.\logs\Update-EmployeeOrgUnit-<name>.log` during each
+processing pass; use `-Log` to write processed account and OU details to it and
+`-LogName <name>` to set the filename suffix. The SQL query and SQLite database
+paths are resolved relative to the current working directory.
 
 ## Reference files
 
