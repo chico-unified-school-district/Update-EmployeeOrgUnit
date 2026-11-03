@@ -188,8 +188,9 @@ function Update-OU ([pscredential]$cred) {
  begin {
   $i = 0
   $list = @()
+  if (!$LoGName) { $LogName = (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss') }
   $logFilePath = ".\logs\Update-EmployeeOrgUnit-$LogName.log"
-  'empid|old_ou|new_ou' | Out-File -FilePath $logFilePath -Encoding UTF8 -Force
+  if ($Log) { 'empid|old_ou|new_ou' | Out-File -FilePath $logFilePath -Encoding UTF8 -Force }
  }
  process {
   if (!$_.targetOU) { return $_ }
@@ -201,7 +202,7 @@ function Update-OU ([pscredential]$cred) {
    WhatIf     = $WhatIf
   }
   $i++
-  $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new
+  if ($Log) { $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new }
   $msg = $MyInvocation.MyCommand.Name, $_.info, $_.oldNew.old, $_.oldNew.new
   Write-Host ('{0},{1},OLD:{2},NEW:{3}' -f $msg) -F Magenta
   if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
