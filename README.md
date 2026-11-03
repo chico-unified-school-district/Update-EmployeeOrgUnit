@@ -9,7 +9,10 @@ database and Active Directory by employee ID.
 The script:
 
 1. Reads employee records from `vwHREmploymentList` using
-   [`sql/active-employees.sql`](./sql/active-employees.sql).
+   [`sql/active-employees.sql`](./sql/active-employees.sql). The query excludes
+   records with employment status `R` or `T` and blank site IDs, and includes
+   only records edited within the previous 14 days; it is not a full extract of
+   all active employees.
 2. Reads site, bargaining-unit, and alternate-job-category mappings from a
    SQLite reference database.
 3. Finds enabled, non-student, non-service, non-generic Active Directory users

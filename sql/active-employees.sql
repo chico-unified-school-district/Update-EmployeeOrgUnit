@@ -29,5 +29,4 @@ WHERE
   -- AND EmpID in (99999999)
   -- AND PersonTypeId IN (1,2,4,6)
   AND DateTimeEdited > DATEADD(day,-14,getdate())
-  -- AND NameLast = 'smith'
 ORDER BY empId;
