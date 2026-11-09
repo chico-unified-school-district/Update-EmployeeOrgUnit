@@ -223,11 +223,8 @@ function Set-PropTargetOU ($ou) {
 }
 
 function Skip-Exception {
- begin {
-  $exceptionPhrase = 'Prevent OrgUnit Update'
- }
  process {
-  if ($_.ad.info -match $exceptionPhrase) {
+  if ($_.ad.info -match 'Prevent OrgUnit Update') {
    Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.info) -f Blue
    return
   }
