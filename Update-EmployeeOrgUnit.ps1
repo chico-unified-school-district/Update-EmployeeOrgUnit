@@ -324,7 +324,7 @@ do {
              Show-Object
 
  if ($WhatIf) { break }
- Write-Host ('{0},Next run at {1}' -f $MyInvocation.MyCommand.Name, (Get-Date).AddMinutes(3600)) -F Green
+ Write-Host ('{0},Next run at {1}' -f $MyInvocation.MyCommand.Name, (Get-Date).AddHours(1)) -F Green
  Start-Sleep -Seconds 3600
 } until ((Get-Date) -gt (Get-Date $stopTime))
 
