@@ -303,6 +303,7 @@ $empDBParams = @{
  Credential = $SQLCredentialEmployees
 }
 
+"For exceptions add the phrase 'Prevent OrgUnit Update' to the user's AD object Info attribute."
 $stopTime = Get-Date '5:00PM'
 if (!$WhatIf) { Write-Host ('{0},Stop Time:{1}' -f $MyInvocation.MyCommand.Name, $stopTime) -F Green }
 do {
