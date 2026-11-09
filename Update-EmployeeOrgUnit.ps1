@@ -1,18 +1,75 @@
 <#
 .SYNOPSIS
-  Pull data from Employee Database (Escape Online) and
-  update Active Direcrtory user object attrbutes using employeeId as the foreign key.
+  Update Active Directory employee organizational-unit placement from employee and site data.
 .DESCRIPTION
+  Reads recent employee records from sql\active-employees.sql and site and job
+  mappings from the SQLite reference database. Employees are matched to enabled,
+  eligible Active Directory users by employee ID. The script builds a target OU
+  from each employee's site and job classification and moves users whose
+  current OU does not match that target.
+
+  Employees without an AD match, a site mapping, or a target OU are skipped.
+  Accounts whose info attribute contains "Prevent OrgUnit Update" are also
+  skipped. Target OUs that cannot be found are reported, but the script still
+  attempts the move unless -WhatIf is used. Review the output before allowing
+  changes.
+
+  -WhatIf performs one pass without moving AD objects. Without -WhatIf, the
+  script runs a pass immediately and repeats hourly until its local 5:00 PM
+  stopping-time check succeeds. The check occurs after each hourly sleep, so the
+  final pass can end after 5:00 PM.
+
+  The SQL query and SQLite path are resolved relative to the current working
+  directory. Use -Log to write processed account and OU details under .\logs;
+  -LogName sets the log filename suffix. Use -Wait to pause before each move;
+  pressing Enter continues the move and does not cancel it.
 .EXAMPLE
-.\Update-EmployeeOrgUnit.ps1 -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj
+  $adCredential = Get-Credential
+  $sqlCredential = Get-Credential
+  .\Update-EmployeeOrgUnit.ps1 `
+    -ADCredential $adCredential `
+    -EmployeeRootOU 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
+    -SQLServerEmployees 'sql.example.org' `
+    -SQLDatabaseEmployees 'EmployeeDatabase' `
+    -SQLCredentialEmployees $sqlCredential `
+    -SQLiteSiteRefDatabase '.\sqlite\sites.db' `
+    -WhatIf -Verbose
+
+  Reads the configured data and previews one pass without moving AD objects.
 .EXAMPLE
-  .\Update-EmployeeOrgUnit.ps1 -ADCredential $adCredObj -SearchBase 'OU=Employees,DC=our,DC=org' -SQLServer EscapeDBServer.our.org -SQLDatabase EscapeOnline -SQLCred $sqlCredObj -WhatIf -Verbose -Debug
+  .\Update-EmployeeOrgUnit.ps1 `
+    -ADCredential $adCredential `
+    -EmployeeRootOU 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
+    -SQLServerEmployees 'sql.example.org' `
+    -SQLDatabaseEmployees 'EmployeeDatabase' `
+    -SQLCredentialEmployees $sqlCredential `
+    -SQLiteSiteRefDatabase '.\sqlite\sites.db' `
+    -Log -LogName 'preview' -WhatIf
+
+  Previews one pass and writes processed account and OU details to
+  .\logs\Update-EmployeeOrgUnit-preview.log.
 .INPUTS
-  Common parameters are used as inputs.
+  Required parameters:
+    -ADCredential          Credential used to query and move AD objects.
+    -EmployeeRootOU        Root OU used to search for AD users and construct
+                           target distinguished names.
+    -SQLServerEmployees    SQL Server hosting employee data.
+    -SQLDatabaseEmployees  Employee database name.
+    -SQLCredentialEmployees Credential used to query employee data.
+    -SQLiteSiteRefDatabase Path to the SQLite site and job reference database.
+
+  Optional parameters:
+    -Log                   Write processed account and OU details to a log.
+    -LogName               Log filename suffix.
+    -Wait                  Pause for input before each move.
+    -WhatIf (-wi)           Preview moves without applying them.
 .OUTPUTS
+  Processing messages are written to the console. The script does not define a
+  structured output contract.
 .NOTES
-Special Thanks:
-http://woshub.com/powershell-get-folder-sizes/
+  Requires the ActiveDirectory, dbatools, PSSqlite, and CommonScriptFunctions
+  modules, and access to the configured SQL Server, SQLite database, and AD.
+  See README.md for database requirements and usage details.
 #>
 
 [cmdletbinding()]
@@ -20,7 +77,6 @@ param (
  [Parameter(Mandatory = $True)][PSCredential]$ADCredential,
  # # Used for building a target ou
  [Parameter(Mandatory = $True)][string]$EmployeeRootOU,
- [Parameter(Mandatory = $True)][string]$ADSearchBase,
  [Parameter(Mandatory = $True)][string]$SQLServerEmployees,
  [Parameter(Mandatory = $True)][string]$SQLDatabaseEmployees,
  [Parameter(Mandatory = $True)][PSCredential]$SQLCredentialEmployees,
@@ -254,7 +310,7 @@ $stopTime = Get-Date '5:00PM'
 if (!$WhatIf) { Write-Host ('{0},Stop Time:{1}' -f $MyInvocation.MyCommand.Name, $stopTime) -F Green }
 do {
  $empData = Get-EmployeeData $empDBParams
- $adData = Get-ADData -ou $ADSearchBase -cred $ADCredential
+ $adData = Get-ADData -ou $EmployeeRootOU -cred $ADCredential
 
  $empData |
   New-Obj |

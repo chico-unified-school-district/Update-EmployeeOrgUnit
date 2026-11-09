@@ -12,27 +12,33 @@ The script:
    [`sql/active-employees.sql`](./sql/active-employees.sql). The query excludes
    records with employment status `R` or `T` and blank site IDs, and includes
    only records edited within the previous 14 days; it is not a full extract of
-   all active employees.
+   all active employees. It returns employee ID, site, bargaining-unit, and job
+   category data used by the OU mapping.
 2. Reads site, bargaining-unit, and alternate-job-category mappings from a
    SQLite reference database.
 3. Finds enabled, non-student, non-service, non-generic Active Directory users
-   with an employee ID and email address under the configured search base.
+   with an employee ID and email address under `EmployeeRootOU`.
 4. Builds a target OU from the employee's site and job classification, compares
    it with the user's current OU, and moves users whose OU needs to change.
+   Alternate job-category mappings override the bargaining-unit mapping. Site
+   IDs of 500 or greater use the district-services OU pattern; site ID 999
+   does not produce a target OU.
 
 Employees without a matching AD account, site mapping, or computable target OU
-are skipped. The script reports target OUs that it cannot find in Active
-Directory; review those messages and the proposed changes before running
-without `-WhatIf`. Without `-WhatIf`, it runs an initial pass and then repeats
-hourly until its local 5:00 PM stopping-time check succeeds. A `-WhatIf` run
-performs one pass. The script's helper functions are declared in alphabetical
-order.
+are skipped. Accounts whose `info` attribute contains `Prevent OrgUnit Update`
+are also skipped. The script reports target OUs that it cannot find in Active
+Directory, but still attempts those moves when run without `-WhatIf`; review
+the reported OUs and proposed changes before allowing changes. Without
+`-WhatIf`, it runs an initial pass and then repeats hourly until its local
+5:00 PM stopping-time check succeeds. Since the check follows the hourly sleep,
+the final pass can end after 5:00 PM. A `-WhatIf` run performs one pass.
 
 ## Requirements
 
 Run from a Windows computer with network access to Active Directory and the
-employee SQL Server. The account credentials must have permission to read the
-employee data and query/move the relevant AD objects.
+employee SQL Server. The supplied AD credential must be able to query the
+`EmployeeRootOU` subtree and move relevant AD objects. The SQL credential must
+be able to query the employee data.
 
 The script imports these PowerShell modules:
 
@@ -66,7 +72,6 @@ $sqlCredential = Get-Credential
 .\Update-EmployeeOrgUnit.ps1 `
   -ADCredential $adCredential `
   -EmployeeRootOU 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
-  -ADSearchBase 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
   -SQLServerEmployees 'sql.example.org' `
   -SQLDatabaseEmployees 'EmployeeDatabase' `
   -SQLCredentialEmployees $sqlCredential `
@@ -76,11 +81,12 @@ $sqlCredential = Get-Credential
 
 Review the `-WhatIf` output before running for real. Remove `-WhatIf` to allow
 the script to move AD objects. Use `-Wait` to pause for input before each move;
-the script proceeds after that input and does not use it to cancel the move.
-The script initializes `.\logs\Update-EmployeeOrgUnit-<name>.log` during each
-processing pass; use `-Log` to write processed account and OU details to it and
-`-LogName <name>` to set the filename suffix. The SQL query and SQLite database
-paths are resolved relative to the current working directory.
+pressing Enter continues the move and does not cancel it. Use `-Log` to write
+account identifiers and old/new OU details to
+`.\logs\Update-EmployeeOrgUnit-<name>.log`; the `logs` directory must exist.
+Use `-LogName <name>` to set the filename suffix (a timestamp is used if omitted).
+`-LogName` only affects the output when `-Log` is also specified. The SQL query
+and SQLite database paths are resolved relative to the current working directory.
 
 ## Reference files
 
