@@ -41,11 +41,12 @@ function Compare-OU {
 }
 
 function Get-ADData ($ou, [pscredential]$cred) {
- $properties = 'EmployeeID', 'extensionAttribute1', 'departmentNumber', 'Description', 'whenCreated'
+ $properties = 'EmployeeID', 'extensionAttribute1',
+ 'departmentNumber', 'Description', 'info', 'whenCreated'
  $filter = "
  Enabled -eq 'True' -and
  EmployeeID -like '*' -and
- mail -like '*@*' -and
+ Mail -like '*@*' -and
  -not(employeeType -eq 'student') -and
  -not(Description -like '*Service*') -and
  -not(Description -like '*Generic*') -and
@@ -158,9 +159,22 @@ function Set-PropTargetOU ($ou) {
    }
   }
   if (!$_.targetOU) {
-   $msg = $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.emp.SiteID, $_.siteData.siteDesc
+   $msg = $MyInvocation.MyCommand.Name, $_.info, $_.emp.SiteID, $_.siteData.siteDesc
    return (Write-Host ('{0},{1},No target OU detected for site {2} - {3}' -f $msg) -F Red)
   } # Skip if no target OU detected
+  $_
+ }
+}
+
+function Skip-Exception {
+ begin {
+  $exceptionPhrase = 'Prevent OrgUnit Update'
+ }
+ process {
+  if ($_.ad.info -match $exceptionPhrase) {
+   Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.info) -f Blue
+   return
+  }
   $_
  }
 }
@@ -171,6 +185,7 @@ function Show-Object {
   # if ($Wait) { Read-Host 'Proceed?' }
  }
 }
+
 
 function Test-OU ($ou, [pscredential]$cred) {
  begin { $allOrgUnits = Get-ADOrganizationalUnit -Filter 'Name -like "*"' -SearchBase $ou -Credential $cred }
@@ -235,10 +250,8 @@ $empDBParams = @{
  Credential = $SQLCredentialEmployees
 }
 
-if (!$wWhatIf) {
- $stopTime = Get-Date '5:00PM'
- Write-Host ('{0},Stop Time:{1}' -f $MyInvocation.MyCommand.Name, $stopTime) -F Green
-}
+$stopTime = Get-Date '5:00PM'
+if (!$WhatIf) { Write-Host ('{0},Stop Time:{1}' -f $MyInvocation.MyCommand.Name, $stopTime) -F Green }
 do {
  $empData = Get-EmployeeData $empDBParams
  $adData = Get-ADData -ou $ADSearchBase -cred $ADCredential
@@ -247,14 +260,16 @@ do {
   New-Obj |
    Set-PropAD -data $adData |
     Set-PropInfo |
-     Set-PropSiteData -data $siteData |
-      Set-PropLevelOU $typeData $altJobData |
-       Set-PropTargetOU $EmployeeRootOU |
-        Set-PropOldNewOUData $EmployeeRootOU |
-         Test-OU $EmployeeRootOU $ADCredential |
-          Compare-OU |
-           Update-OU -cred $ADCredential |
-            Show-Object
+     Skip-Exception |
+      Set-PropSiteData -data $siteData |
+       Set-PropLevelOU $typeData $altJobData |
+        Set-PropTargetOU $EmployeeRootOU |
+         Set-PropOldNewOUData $EmployeeRootOU |
+          Test-OU $EmployeeRootOU $ADCredential |
+           Compare-OU |
+            Update-OU -cred $ADCredential |
+             Show-Object
+
  if ($WhatIf) { break }
  Write-Host ('{0},Next run at {1}' -f $MyInvocation.MyCommand.Name, (Get-Date).AddMinutes(3600)) -F Green
  Start-Sleep -Seconds 3600
