@@ -192,7 +192,7 @@ function Set-PropOldNewOUData ($rootOU) {
 
 function Set-PropSiteData ($data) {
  process {
-  if ($_.emp.SiteID -notmatch '^\d+$') { return $_ }
+  if ($_.emp.SiteID -notmatch '\d') { return $_ }
   $_.siteData = $data[[long]$_.emp.SiteID]
   $_
  }
