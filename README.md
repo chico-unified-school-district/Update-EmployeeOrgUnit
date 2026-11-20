@@ -9,26 +9,29 @@ database and Active Directory by employee ID.
 The script:
 
 1. Reads employee records from `vwHREmploymentList` using
-   [`sql/active-employees.sql`](./sql/active-employees.sql). The query excludes
-   records with employment status `R` or `T` and blank site IDs, and includes
-   only records edited within the previous 14 days; it is not a full extract of
-   all active employees. It returns employee ID, site, bargaining-unit, and job
-   category data used by the OU mapping.
+   [`sql/active-employees.sql`](./sql/active-employees.sql). The query selects
+   active records edited within the previous 14 days; it is not a full extract
+   of all active employees. It returns employee ID, site, bargaining-unit, and
+   job category data used by the OU mapping.
 2. Reads site, bargaining-unit, and alternate-job-category mappings from a
    SQLite reference database.
-3. Finds enabled, non-student, non-service, non-generic Active Directory users
-   with an employee ID and email address under `EmployeeRootOU`.
+3. Finds enabled, non-student Active Directory users with an employee ID and
+   email address, excluding service and generic accounts by title or
+   description. The user query does not specify a search base, so it is not
+   restricted to `EmployeeRootOU`.
 4. Builds a target OU from the employee's site and job classification, compares
    it with the user's current OU, and moves users whose OU needs to change.
    Alternate job-category mappings override the bargaining-unit mapping. Site
-   IDs of 500 or greater use the district-services OU pattern; site ID 999
-   does not produce a target OU.
+   IDs of 500 or greater use the district-services OU pattern. When no target
+   can be constructed, including for site ID 999, the script uses
+   `DefaultEmployeeOU` under `EmployeeRootOU`.
 
-Employees without a matching AD account, site mapping, or computable target OU
-are skipped. Accounts whose `info` attribute contains `Prevent OrgUnit Update`
-are also skipped. The script reports target OUs that it cannot find in Active
-Directory, but still attempts those moves when run without `-WhatIf`; review
-the reported OUs and proposed changes before allowing changes. Without
+Employees without a matching AD account and accounts whose `info` attribute
+contains `Prevent OrgUnit Update` are skipped. A missing site mapping can
+result in the default OU rather than a skipped employee. The script reports
+target OUs that it cannot find under `EmployeeRootOU`, but still attempts those
+moves when run without `-WhatIf`; review the reported OUs and proposed changes
+before allowing changes. Without
 `-WhatIf`, it runs an initial pass and then repeats hourly until its local
 5:00 PM stopping-time check succeeds. Since the check follows the hourly sleep,
 the final pass can end after 5:00 PM. A `-WhatIf` run performs one pass.
@@ -38,7 +41,8 @@ the final pass can end after 5:00 PM. A `-WhatIf` run performs one pass.
 Run from a Windows computer with network access to Active Directory and the
 employee SQL Server. The supplied AD credential must be able to query the
 `EmployeeRootOU` subtree and move relevant AD objects. The SQL credential must
-be able to query the employee data.
+be able to query the employee data. The AD user query uses its default search
+base rather than `EmployeeRootOU`.
 
 The script imports these PowerShell modules:
 
@@ -72,12 +76,17 @@ $sqlCredential = Get-Credential
 .\Update-EmployeeOrgUnit.ps1 `
   -ADCredential $adCredential `
   -EmployeeRootOU 'OU=Employees,OU=Users,OU=Root,DC=example,DC=org' `
+  -DefaultEmployeeOU 'OU=Substitute Teachers,OU=Teachers' `
   -SQLServerEmployees 'sql.example.org' `
   -SQLDatabaseEmployees 'EmployeeDatabase' `
   -SQLCredentialEmployees $sqlCredential `
   -SQLiteSiteRefDatabase '.\sqlite\sites.db' `
   -WhatIf -Verbose
 ```
+
+`DefaultEmployeeOU` is a relative OU distinguished name; the script appends
+`EmployeeRootOU` to form the fallback target. Choose an existing OU appropriate
+for employees without a calculated target.
 
 Review the `-WhatIf` output before running for real. Remove `-WhatIf` to allow
 the script to move AD objects. Use `-Wait` to pause for input before each move;
@@ -87,6 +96,16 @@ account identifiers and old/new OU details to
 Use `-LogName <name>` to set the filename suffix (a timestamp is used if omitted).
 `-LogName` only affects the output when `-Log` is also specified. The SQL query
 and SQLite database paths are resolved relative to the current working directory.
+
+## Jenkins
+
+[`jenkins.ps1`](./jenkins.ps1) expects `JOB_NAME`, `SITES_DB_FILE`, `AD_USER`,
+`AD_PW`, `EMPLOYEE_SERVER`, `EMPLOYEE_DATABASE`, `ESCAPE_USER`, and `ESCAPE_PW`
+environment variables, along with the `Get-NewCommit` and `Set-PSCred`
+functions. It clones the repository if the job script is absent, calls
+`Get-NewCommit` with the configured hash, and overwrites `.\sqlite\sites.db`
+with `SITES_DB_FILE`. It currently sets `$test = $true`, passing `-WhatIf` for
+a single preview pass. Review its hard-coded OU settings before use.
 
 ## Reference files
 
