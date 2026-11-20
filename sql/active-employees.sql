@@ -22,8 +22,7 @@ SELECT
     , JobCategoryDescr
 FROM vwHREmploymentList
 WHERE
-  EmploymentStatusCode NOT IN ('R','T')
-  AND SiteID <> ''
+  EmploymentStatusIsActive = 1
   -- AND EmpID in (99999999)
   AND DateTimeEdited > DATEADD(day,-14,getdate())
 ORDER BY empId;

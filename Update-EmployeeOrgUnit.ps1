@@ -77,6 +77,7 @@ param (
  [Parameter(Mandatory = $True)][PSCredential]$ADCredential,
  # # Used for building a target ou
  [Parameter(Mandatory = $True)][string]$EmployeeRootOU,
+ [Parameter(Mandatory = $True)][string]$DefaultEmployeeOU,
  [Parameter(Mandatory = $True)][string]$SQLServerEmployees,
  [Parameter(Mandatory = $True)][string]$SQLDatabaseEmployees,
  [Parameter(Mandatory = $True)][PSCredential]$SQLCredentialEmployees,
@@ -96,7 +97,7 @@ function Compare-OU {
  }
 }
 
-function Get-ADData ($ou, [pscredential]$cred) {
+function Get-ADData ([pscredential]$cred) {
  $properties = 'EmployeeID', 'extensionAttribute1',
  'departmentNumber', 'Description', 'info', 'whenCreated'
  $filter = "
@@ -112,12 +113,11 @@ function Get-ADData ($ou, [pscredential]$cred) {
  $params = @{
   Filter     = $filter
   Properties = $properties
-  SearchBase = $ou
   Credential = $cred
  }
  $adResults = Get-ADUser @params | Group-Object -Property EmployeeID -AsHashTable
  # $adResults = Get-ADUser @params | Where-Object { $_.SurName -like 'U*' } | Group-Object -Property EmployeeID -AsHashTable
- Write-Host ('{0},{1},count:{2}' -f $MyInvocation.MyCommand.Name, $ou, @($adResults.values).count) -F Green
+ Write-Host ('{0},count:{1}' -f $MyInvocation.MyCommand.Name, @($adResults.values).count) -F Green
  $adResults
 }
 
@@ -192,32 +192,26 @@ function Set-PropOldNewOUData ($rootOU) {
 
 function Set-PropSiteData ($data) {
  process {
-  $id = $_.emp.SiteID
-  $_.siteData = $data.Where({ $_.siteCode -eq $id })
-  if (!$_.siteData) { return } # Skip if no site match found
+  $_.siteData = $data[[long]$_.emp.SiteID]
   $_
  }
 }
 
-function Set-PropTargetOU ($ou) {
- begin {
-  $rootOU = $ou.Trim('OU').Trim('=')
- }
+function Set-PropTargetOU ($ou, $defaultOU) {
+ begin { $rootOU = $ou.Trim('OU').Trim('=') }
  process {
   $_.targetOU = if ([int]$_.emp.SiteID -ge 500) {
    if ($_.levelOU -and $_.siteData.areaOU) {
     'OU={0},OU={1},OU={2}' -f $_.siteData.deptOU , $_.levelOU, $rootOU
    }
   }
-  else {
-   if ($_.levelOU -and $_.siteData.areaOU -and $_.siteData.deptOU) {
-    'OU={0},OU={1},OU={2},OU={3}' -f $_.siteData.deptOU, $_.siteData.areaOU, $_.levelOU, $rootOU
-   }
+  elseif ($_.levelOU -and $_.siteData.areaOU -and $_.siteData.deptOU) {
+   'OU={0},OU={1},OU={2},OU={3}' -f $_.siteData.deptOU, $_.siteData.areaOU, $_.levelOU, $rootOU
   }
   if (!$_.targetOU) {
-   $msg = $MyInvocation.MyCommand.Name, $_.info, $_.emp.SiteID, $_.siteData.siteDesc
-   return (Write-Host ('{0},{1},No target OU detected for site {2} - {3}' -f $msg) -F Red)
-  } # Skip if no target OU detected
+   Write-Verbose ('{0},{1},No target OU found. Using default [{2}]' -f $MyInvocation.MyCommand.Name, $_.info, $defaultOU)
+   $_.targetOU = $defaultOU + ',' + $ou
+  }
   $_
  }
 }
@@ -225,7 +219,7 @@ function Set-PropTargetOU ($ou) {
 function Skip-Exception {
  process {
   if ($_.ad.info -match 'Prevent OrgUnit Update') {
-   Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.info) -f Blue
+   Write-Verbose ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.info)
    return
   }
   $_
@@ -291,7 +285,8 @@ Import-Module -Name ActiveDirectory -Cmdlet 'Get-ADUser', 'Move-ADObject', 'Get-
 Show-BlockInfo Main
 if ($WhatIf) { Show-TestRun }
 
-$siteData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM site_data'
+$siteData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM site_data' |
+ Group-Object -Property siteCode -AsHashTable
 $typeData = Invoke-SqliteQuery -DataSource $SQLiteSiteRefDatabase -Query 'SELECT * FROM type_data'
 $nonTeachingSql = 'SELECT * from alt_job_categories'
 # $nonTeachingSql = "SELECT * from alt_job_categories WHERE OU = 'Non-Teaching'"
@@ -317,7 +312,7 @@ do {
      Skip-Exception |
       Set-PropSiteData -data $siteData |
        Set-PropLevelOU $typeData $altJobData |
-        Set-PropTargetOU $EmployeeRootOU |
+        Set-PropTargetOU -ou $EmployeeRootOU -defaultOU $DefaultEmployeeOU |
          Set-PropOldNewOUData $EmployeeRootOU |
           Test-OU $EmployeeRootOU $ADCredential |
            Compare-OU |
