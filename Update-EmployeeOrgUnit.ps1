@@ -8,11 +8,11 @@
   from each employee's site and job classification and moves users whose
   current OU does not match that target.
 
-  Employees without an AD match, a site mapping, or a target OU are skipped.
-  Accounts whose info attribute contains "Prevent OrgUnit Update" are also
-  skipped. Target OUs that cannot be found are reported, but the script still
-  attempts the move unless -WhatIf is used. Review the output before allowing
-  changes.
+  Employees without an AD match are skipped. Employees with an invalid site ID
+  use the default OU. Accounts whose info attribute contains
+  "Prevent OrgUnit Update" are also skipped. Target OUs that cannot be found
+  are reported, but the script still attempts the move unless -WhatIf is used.
+  Review the output before allowing changes.
 
   -WhatIf performs one pass without moving AD objects. Without -WhatIf, the
   script runs a pass immediately and repeats hourly until its local 5:00 PM
@@ -92,7 +92,8 @@ function Compare-OU {
  process {
   # Write-Verbose ('{0},{1},[{2}],[{3}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new)
   # Match instead of equals due to some staff being moved into more granular sub-OUs This will prevent a unneeded moves.
-  if ($_.oldNew.old -match $_.oldNew.new) { return }
+  # if ($_.oldNew.old -match $_.oldNew.new) { return }
+  if ($_.ad.distinguishedName -match $_.targetOU) { return }
   $_
  }
 }
@@ -135,6 +136,7 @@ function New-Obj {
    ad       = $null
    info     = $null
    levelOU  = $null
+   siteId   = $null
    siteData = $null
    targetOU = $null
    oldNew   = $null
@@ -164,8 +166,8 @@ function Set-PropLevelOU ($tData, $altJData) {
   $jobCatDesc = $_.emp.JobCategoryDescr
   $altJob = $altJData.Where({ $_.JobCategoryDescr -eq $jobCatDesc })
 
-  $_.levelOU = if ([int]$_.emp.SiteID -eq 999) { $null }
-  elseif ([int]$_.emp.SiteID -ge 500 ) { 'District Services' }
+  $_.levelOU = if ($null -eq $_.siteId -or $_.siteId -eq 999) { $null }
+  elseif ($_.siteId -ge 500 ) { 'District Services' }
   else {
    if ($altJob) {
     Write-Verbose ('{0},{1},Alt Job detected [{2}]' -f $MyInvocation.MyCommand.Name, $_.ad.SamAccountName, $altJob.OU)
@@ -192,8 +194,12 @@ function Set-PropOldNewOUData ($rootOU) {
 
 function Set-PropSiteData ($data) {
  process {
-  if ($_.emp.SiteID -notmatch '\d') { return $_ }
+  if ($_.emp.SiteID -notmatch '\d') {
+   Write-Verbose ('{0},{1},Invalid site ID [{2}]' -f $MyInvocation.MyCommand.Name, $_.info, $_.emp.SiteID)
+   return $_
+  }
   $_.siteData = $data[[long]$_.emp.SiteID]
+  $_.siteId = [int]$_.emp.SiteID
   $_
  }
 }
@@ -201,12 +207,12 @@ function Set-PropSiteData ($data) {
 function Set-PropTargetOU ($ou, $defaultOU) {
  begin { $rootOU = $ou.Trim('OU').Trim('=') }
  process {
-  $_.targetOU = if ([int]$_.emp.SiteID -ge 500) {
+  $_.targetOU = if ($null -ne $_.siteId -and $_.siteId -ge 500) {
    if ($_.levelOU -and $_.siteData.areaOU) {
     'OU={0},OU={1},OU={2}' -f $_.siteData.deptOU , $_.levelOU, $rootOU
    }
   }
-  elseif ($_.levelOU -and $_.siteData.areaOU -and $_.siteData.deptOU) {
+  elseif ($null -ne $_.siteId -and $_.levelOU -and $_.siteData.areaOU -and $_.siteData.deptOU) {
    'OU={0},OU={1},OU={2},OU={3}' -f $_.siteData.deptOU, $_.siteData.areaOU, $_.levelOU, $rootOU
   }
   if (!$_.targetOU) {
@@ -230,10 +236,9 @@ function Skip-Exception {
 function Show-Object {
  process {
   Write-Verbose ($MyInvocation.MyCommand.Name, $_ | Out-String)
-  # if ($Wait) { Read-Host 'Proceed?' }
+  if ($Wait) { Read-Host 'Proceed?' }
  }
 }
-
 
 function Test-OU ($ou, [pscredential]$cred) {
  begin { $allOrgUnits = Get-ADOrganizationalUnit -Filter 'Name -like "*"' -SearchBase $ou -Credential $cred }
@@ -257,6 +262,7 @@ function Update-OU ([pscredential]$cred) {
  }
  process {
   if (!$_.targetOU) { return $_ }
+  if ($_.ad.distinguishedName -match $_.targetOU) { return $_ }
   $params = @{
    Identity   = $_.ad.ObjectGUID
    TargetPath = $_.targetOU
@@ -267,8 +273,8 @@ function Update-OU ([pscredential]$cred) {
   $i++
   if ($Log) { $list += '{0}|{1}|{2}' -f $_.ad.SamAccountName, $_.oldNew.old, $_.oldNew.new }
   $msg = $MyInvocation.MyCommand.Name, $_.info, $_.oldNew.old, $_.oldNew.new
-  Write-Host ('{0},{1},OLD:{2},NEW:{3}' -f $msg) -F Magenta
-  if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
+  Write-Host ('{0},{1},[{2}] -> [{3}]' -f $msg) -F Magenta
+  # if ($Wait) { Read-Host 'Proceed with OrgUnit update?' }
   Move-ADObject @params
   $_
  }
@@ -316,9 +322,9 @@ do {
         Set-PropTargetOU -ou $EmployeeRootOU -defaultOU $DefaultEmployeeOU |
          Set-PropOldNewOUData $EmployeeRootOU |
           Test-OU $EmployeeRootOU $ADCredential |
-           Compare-OU |
-            Update-OU -cred $ADCredential |
-             Show-Object
+           # Compare-OU |
+           Update-OU -cred $ADCredential |
+            Show-Object
 
  if ($WhatIf) { break }
  Write-Host ('{0},Next run at {1}' -f $MyInvocation.MyCommand.Name, (Get-Date).AddHours(1)) -F Green

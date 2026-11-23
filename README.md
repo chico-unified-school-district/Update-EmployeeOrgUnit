@@ -28,7 +28,8 @@ The script:
 
 Employees without a matching AD account and accounts whose `info` attribute
 contains `Prevent OrgUnit Update` are skipped. A missing site mapping can
-result in the default OU rather than a skipped employee. The script reports
+result in the default OU rather than a skipped employee. Blank or invalid site
+IDs produce a warning and use the default OU. The script reports
 target OUs that it cannot find under `EmployeeRootOU`, but still attempts those
 moves when run without `-WhatIf`; review the reported OUs and proposed changes
 before allowing changes. Without
